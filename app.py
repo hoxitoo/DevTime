@@ -1,5 +1,5 @@
 """
-DevTime v6 — точка входа.
+DevTime v7 — точка входа.
 Запуск: python app.py
 Зависимости: pip install customtkinter
 """

@@ -1,5 +1,5 @@
 """
-DevTime v5 — утилиты и сервис таймера.
+DevTime v7 — утилиты и сервис таймера.
 """
 
 import time
@@ -72,6 +72,20 @@ def darken(hex_color: str, factor: float = 0.4) -> str:
     r = int(r * (1 - factor))
     g = int(g * (1 - factor))
     b = int(b * (1 - factor))
+    return f"#{r:02x}{g:02x}{b:02x}"
+
+def blend(fg: str, bg: str, alpha: float) -> str:
+    """Альфа-композитинг: fg поверх bg с прозрачностью alpha (0..1) → 6-значный hex.
+
+    Tkinter Canvas НЕ понимает 8-значный hex с альфой (#RRGGBBAA),
+    поэтому полупрозрачность считаем сами и отдаём непрозрачный цвет.
+    """
+    a = max(0.0, min(1.0, alpha))
+    fr, fg_, fb = hex_to_rgb(fg)
+    br, bg_, bb = hex_to_rgb(bg)
+    r = int(fr * a + br * (1 - a))
+    g = int(fg_ * a + bg_ * (1 - a))
+    b = int(fb * a + bb * (1 - a))
     return f"#{r:02x}{g:02x}{b:02x}"
 
 

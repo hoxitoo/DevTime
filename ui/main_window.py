@@ -1,20 +1,19 @@
 """
-DevTime v6 — главное окно.
-Добавлены верхние разделы:
-- Библиотека проектов
-- Статистика
+DevTime v7 — главное окно.
+Разделы: Библиотека проектов, Статистика, страница проекта.
 """
 
 import time
 import logging
 import tkinter as tk
+import tkinter.font as tkfont
 import customtkinter as ctk
 from tkinter import messagebox
 from tkinter.filedialog import asksaveasfilename
 from datetime import date, timedelta
 
 from db import DB
-from utils import TimerService, fmt_h, fmt_hms, darken, hex_to_rgb
+from utils import TimerService, fmt_h, fmt_hms, darken, blend, hex_to_rgb
 from ui.dialogs import ActivityDialog, NoteDialog, EditNoteDialog
 
 log = logging.getLogger(__name__)
@@ -34,12 +33,47 @@ TEXT    = "#dde3f0"
 MUTED   = "#4a5570"
 MUTED2  = "#2a3350"
 
+# ── Шрифты (кроссплатформенный выбор) ─────────────────────────────────────────
+# Дефолты — Windows. Реальные семейства подбираются в _resolve_fonts() после
+# создания root: на Linux/macOS Segoe UI нет, нужен фолбэк, иначе эмодзи и
+# текст рендерятся неконсистентно.
+FONT_UI    = "Segoe UI"
+FONT_MONO  = "Courier New"
+FONT_EMOJI = "Segoe UI Emoji"
+
+
+def _resolve_fonts(root):
+    """Подбирает доступные семейства шрифтов под текущую ОС."""
+    global FONT_UI, FONT_MONO, FONT_EMOJI
+    try:
+        fams = {f.lower() for f in tkfont.families(root)}
+    except Exception as e:  # noqa: BLE001 — не критично, остаёмся на дефолтах
+        log.debug("font families unavailable: %s", e)
+        return
+
+    def pick(candidates, default):
+        for c in candidates:
+            if c.lower() in fams:
+                return c
+        return default
+
+    FONT_UI = pick(
+        ["Segoe UI", "SF Pro Text", "Helvetica Neue", "Noto Sans",
+         "DejaVu Sans", "Ubuntu", "Cantarell", "Arial"], FONT_UI)
+    FONT_MONO = pick(
+        ["Courier New", "SF Mono", "JetBrains Mono", "Consolas", "Menlo",
+         "DejaVu Sans Mono", "Noto Sans Mono", "Liberation Mono", "monospace"], FONT_MONO)
+    FONT_EMOJI = pick(
+        ["Segoe UI Emoji", "Apple Color Emoji", "Noto Color Emoji",
+         "Noto Emoji", "Segoe UI Symbol", FONT_UI], FONT_EMOJI)
+    log.info("fonts: ui=%s mono=%s emoji=%s", FONT_UI, FONT_MONO, FONT_EMOJI)
+
 
 def _f(size=11, bold=False):
     return ctk.CTkFont(
         size=size,
         weight="bold" if bold else "normal",
-        family="Segoe UI" if size > 12 else "Courier New",
+        family=FONT_UI if size > 12 else FONT_MONO,
     )
 
 
@@ -61,11 +95,13 @@ class MainWindow:
     def __init__(self, root: ctk.CTk, db: DB):
         self.root = root
         self.db = db
+        _resolve_fonts(root)
         self.timer = TimerService()
         self.sel_id = None
         self._stop_tick = False
-        self._pomo_active = False
-        self._pomo_end_ts = 0
+        # Pomodoro теперь пер-проектный: aid -> момент окончания (epoch).
+        self._pomos = {}
+        self._pomo_aid = None         # для какого проекта сейчас показан _pomo_lbl
         self._view_mode = "project"   # project | library | stats
         self._nav_buttons = {}
 
@@ -299,22 +335,34 @@ class MainWindow:
         banner = tk.Canvas(outer, height=52, bg=SIDEBAR, highlightthickness=0)
         banner.pack(fill="x")
 
-        def _draw(cv=banner, a=act, r=run, p=paused):
-            cv.delete("all")
+        can_quickstart = (act["status"] == "active") and not run and not paused
+
+        def _draw(cv=banner, a=act, r=run, p=paused, qs=can_quickstart):
+            try:
+                if not cv.winfo_exists():
+                    return
+                cv.delete("all")
+            except tk.TclError:
+                return
             width = cv.winfo_width() or 210
             dark = darken(a["color"], 0.75)
             _grad_line(cv, 0, 0, width, 52, dark, a["color"])
             cv.create_rectangle(0, 0, 20, 52, fill=dark, outline="", stipple="gray50")
             cv.create_rectangle(width - 20, 0, width, 52, fill=dark, outline="", stipple="gray50")
-            cv.create_text(16, 26, text=a["emoji"], font=("Segoe UI Emoji", 22), anchor="w")
-            cv.create_text(48, 14, text=a["name"][:16], font=("Segoe UI", 11, "bold"), fill="#ffffff", anchor="w")
+            cv.create_text(16, 26, text=a["emoji"], font=(FONT_EMOJI, 22), anchor="w")
+            cv.create_text(48, 14, text=a["name"][:16], font=(FONT_UI, 11, "bold"), fill="#ffffff", anchor="w")
             base = a["total_s"] + self.timer.elapsed(aid)
-            tc = GREEN if r else (ORANGE if p else "#ffffffaa")
-            cv.create_text(48, 34, text=fmt_h(base), font=("Courier New", 10), fill=tc, anchor="w")
+            tc = GREEN if r else (ORANGE if p else blend("#ffffff", dark, 0.82))
+            cv.create_text(48, 34, text=fmt_h(base), font=(FONT_MONO, 10), fill=tc, anchor="w")
             if r:
                 cv.create_oval(width - 18, 20, width - 8, 30, fill=GREEN, outline="")
             elif p:
-                cv.create_text(width - 10, 26, text="⏸", font=("Segoe UI Emoji", 10), fill=ORANGE, anchor="e")
+                cv.create_text(width - 10, 26, text="⏸", font=(FONT_EMOJI, 10), fill=ORANGE, anchor="e")
+            elif qs:
+                # Быстрый старт прямо из карточки
+                cv.create_text(width - 13, 26, text="▶", font=(FONT_UI, 13, "bold"),
+                               fill=blend("#ffffff", dark, 0.9), anchor="e", tags="qs")
+                cv.tag_bind("qs", "<Button-1>", lambda e, i=aid: self._quick_start(i))
 
         banner.bind("<Configure>", lambda e: _draw())
         self.root.after(30, _draw)
@@ -329,8 +377,16 @@ class MainWindow:
         menu = tk.Menu(
             self.root, tearoff=0,
             bg=SURF2, fg=TEXT, activebackground=SURF3, activeforeground=TEXT,
-            relief="flat", bd=0, font=("Segoe UI", 10)
+            relief="flat", bd=0, font=(FONT_UI, 10)
         )
+        if act["status"] == "active":
+            if self.timer.is_active(act["id"]):
+                menu.add_command(label="  ⏹  Остановить",
+                                 command=lambda: self._stop(act["id"]))
+            else:
+                menu.add_command(label="  ▶  Запустить",
+                                 command=lambda: self._quick_start(act["id"]))
+            menu.add_separator()
         menu.add_command(label="  ✎  Переименовать", command=lambda: self._rename_dialog(act))
         menu.add_separator()
         menu.add_command(
@@ -413,6 +469,7 @@ class MainWindow:
             w.destroy()
         self._dt_aid = self._dt_time_lbl = self._dt_today_lbl = None
         self._dt_sess_lbl = self._pomo_lbl = None
+        self._pomo_aid = None
 
     def _status_meta(self, act):
         status = act["status"]
@@ -461,6 +518,14 @@ class MainWindow:
 
         actions = ctk.CTkFrame(row, fg_color="transparent")
         actions.pack(side="right", padx=10, pady=10)
+
+        if act["status"] == "active" and not self.timer.is_active(act["id"]):
+            ctk.CTkButton(
+                actions, text="▶", width=40, height=30,
+                fg_color=GREEN, text_color="#000", hover_color="#33eb91",
+                corner_radius=8, font=_f(13, bold=True),
+                command=lambda aid=act["id"]: self._quick_start(aid)
+            ).pack(side="left", padx=(0, 6))
 
         ctk.CTkButton(
             actions, text="Открыть", width=90, height=30,
@@ -646,15 +711,21 @@ class MainWindow:
         hero.pack(fill="x")
 
         def _draw_hero(cv=hero):
-            cv.delete("all")
+            try:
+                if not cv.winfo_exists():
+                    return
+                cv.delete("all")
+            except tk.TclError:
+                return
             width = cv.winfo_width() or 740
             height = 180
             dark = darken(color, 0.82)
             mid = darken(color, 0.55)
             _grad_line(cv, 0, 0, width // 2, height, dark, mid)
             _grad_line(cv, width // 2, 0, width, height, mid, color)
+            # Тонкие скан-линии (Tk не умеет альфу → stipple даёт полупрозрачность)
             for y in range(0, height, 4):
-                cv.create_line(0, y, width, y, fill="#00000030", width=1)
+                cv.create_line(0, y, width, y, fill="#000000", width=1, stipple="gray25")
             for i in range(40):
                 t = i / 40
                 yy = height - 60 + int(60 * t)
@@ -663,18 +734,18 @@ class MainWindow:
                     fill=f"#{int(11*(1-t)):02x}{int(13*(1-t)):02x}{int(18*(1-t)):02x}",
                     outline=""
                 )
-            cv.create_text(32, height // 2 - 10, text=act["emoji"], font=("Segoe UI Emoji", 54), anchor="w")
-            cv.create_text(110, height // 2 - 22, text=act["name"], font=("Segoe UI", 22, "bold"), fill="#ffffff", anchor="w")
+            cv.create_text(32, height // 2 - 10, text=act["emoji"], font=(FONT_EMOJI, 54), anchor="w")
+            cv.create_text(110, height // 2 - 22, text=act["name"], font=(FONT_UI, 22, "bold"), fill="#ffffff", anchor="w")
             if run:
                 cv.create_oval(110, height // 2 + 4, 122, height // 2 + 16, fill=GREEN, outline="")
-                cv.create_text(128, height // 2 + 10, text="ИДЁТ", font=("Courier New", 10), fill=GREEN, anchor="w")
+                cv.create_text(128, height // 2 + 10, text="ИДЁТ", font=(FONT_MONO, 10), fill=GREEN, anchor="w")
             elif paused:
-                cv.create_text(110, height // 2 + 10, text="⏸ ПАУЗА", font=("Courier New", 10), fill=ORANGE, anchor="w")
+                cv.create_text(110, height // 2 + 10, text="⏸ ПАУЗА", font=(FONT_MONO, 10), fill=ORANGE, anchor="w")
             else:
                 status_text, status_color = self._status_meta(act)
-                cv.create_text(110, height // 2 + 10, text=status_text.upper(), font=("Courier New", 10), fill=status_color, anchor="w")
-            cv.create_text(width - 14, height - 12, text=f"с {act['created']}", font=("Courier New", 9), fill="#ffffff55", anchor="se")
-            cv.create_text(width - 14, 16, text="✎  ✕", font=("Segoe UI", 10), fill="#ffffff66", anchor="ne", tags="edit_area")
+                cv.create_text(110, height // 2 + 10, text=status_text.upper(), font=(FONT_MONO, 10), fill=status_color, anchor="w")
+            cv.create_text(width - 14, height - 12, text=f"с {act['created']}", font=(FONT_MONO, 9), fill=blend("#ffffff", color, 0.5), anchor="se")
+            cv.create_text(width - 14, 16, text="✎  ✕", font=(FONT_UI, 11), fill=blend("#ffffff", color, 0.6), anchor="ne", tags="edit_area")
             cv.tag_bind("edit_area", "<Button-1>", lambda e: self._hero_menu(e, act))
 
         hero.bind("<Configure>", lambda e: _draw_hero())
@@ -715,10 +786,12 @@ class MainWindow:
             ctk.CTkButton(rc, text=lab, width=48, height=32, fg_color=SURF2, text_color=MUTED,
                           hover_color=SURF3, font=_f(11), border_width=1, border_color=BORDER,
                           corner_radius=8, command=lambda d=dur: self._pomo_start(aid, d)).pack(side="left", padx=2)
-        if self._pomo_active:
-            rem = max(0, int(self._pomo_end_ts - time.time()))
+        end_ts = self._pomos.get(aid)
+        if end_ts and end_ts - time.time() > 0:
+            rem = int(end_ts - time.time())
             self._pomo_lbl = ctk.CTkLabel(rc, text=f"  ⏱ {fmt_hms(rem)}", text_color=ORANGE, font=_f(12, bold=True))
             self._pomo_lbl.pack(side="left")
+            self._pomo_aid = aid
 
         status = act["status"]
         project_actions = ctk.CTkFrame(self._dzone, fg_color=BG, corner_radius=0)
@@ -845,7 +918,12 @@ class MainWindow:
     #  Charts
     # ══════════════════════════════════════════════════════════════════════════
     def _draw_chart(self, canvas, aid, color):
-        canvas.delete("all")
+        try:
+            if not canvas.winfo_exists():
+                return
+            canvas.delete("all")
+        except tk.TclError:
+            return
         width = canvas.winfo_width() or 680
         height = 100
         rows = self.db.get_daily_totals(aid, days=28)
@@ -881,14 +959,19 @@ class MainWindow:
             if today or d.day in (1, 8, 15, 22):
                 cx = (x0 + x1) / 2
                 canvas.create_text(cx, height - pb + 10, text="сег" if today else d.strftime("%d"),
-                                   fill=GREEN if today else MUTED, font=("Courier New", 8))
+                                   fill=GREEN if today else MUTED, font=(FONT_MONO, 8))
 
         canvas.create_line(pl, height - pb, width - pr, height - pb, fill=BORDER, width=1)
         if mx:
-            canvas.create_text(width - pr, 6, text=fmt_h(mx), fill=MUTED, font=("Courier New", 8), anchor="ne")
+            canvas.create_text(width - pr, 6, text=fmt_h(mx), fill=MUTED, font=(FONT_MONO, 8), anchor="ne")
 
     def _draw_overall_chart(self, canvas):
-        canvas.delete("all")
+        try:
+            if not canvas.winfo_exists():
+                return
+            canvas.delete("all")
+        except tk.TclError:
+            return
         width = canvas.winfo_width() or 680
         height = 120
         rows = self.db.get_all_daily_totals(days=28)
@@ -920,10 +1003,10 @@ class MainWindow:
                     canvas.create_rectangle(x0, y0j, x1, y1j, fill=f"#{r:02x}{g:02x}{b:02x}", outline="")
             if d == date.today() or d.day in (1, 8, 15, 22):
                 canvas.create_text((x0 + x1) / 2, height - pb + 10, text="сег" if d == date.today() else d.strftime("%d"),
-                                   fill=GREEN if d == date.today() else MUTED, font=("Courier New", 8))
+                                   fill=GREEN if d == date.today() else MUTED, font=(FONT_MONO, 8))
 
         canvas.create_line(pl, height - pb, width - pr, height - pb, fill=BORDER, width=1)
-        canvas.create_text(width - pr, 6, text=fmt_h(mx), fill=MUTED, font=("Courier New", 8), anchor="ne")
+        canvas.create_text(width - pr, 6, text=fmt_h(mx), fill=MUTED, font=(FONT_MONO, 8), anchor="ne")
 
     # ══════════════════════════════════════════════════════════════════════════
     #  Session row
@@ -988,11 +1071,23 @@ class MainWindow:
         self._reload_sidebar(keep_detail=False)
         self._refresh_detail(aid)
 
+    def _quick_start(self, aid):
+        """Быстрый старт: открыть проект и сразу запустить таймер."""
+        self._open_project(aid)
+        self._start(aid)
+
     def _stop(self, aid):
         data = self.timer.stop(aid)
-        self._pomo_active = False
+        self._pomos.pop(aid, None)
+        if self._pomo_aid == aid:
+            self._pomo_lbl = None
+            self._pomo_aid = None
         if not data:
             return
+
+        before = self.db.get_activity(aid)
+        before_total = before["total_s"] if before else 0
+        goal_s = (before["goal_h"] * 3600) if before and before["goal_h"] else 0
 
         def after_note(note):
             self.db.log_session(aid, data["started_at"], data["ended_at"], data["duration_s"], note)
@@ -1000,6 +1095,12 @@ class MainWindow:
             fresh = self.db.get_activity(aid)
             if fresh:
                 self._show_detail(dict(fresh))
+                # Уведомление при достижении цели по часам
+                if goal_s and before_total < goal_s <= fresh["total_s"]:
+                    messagebox.showinfo(
+                        "🎯 Цель достигнута!",
+                        f"«{fresh['name']}» — пройдено {fresh['goal_h']:.0f} ч. Так держать! 🔥"
+                    )
 
         NoteDialog(self.root, data["duration_s"], after_note)
 
@@ -1052,7 +1153,15 @@ class MainWindow:
 
     def _delete(self, aid, name):
         if messagebox.askyesno("Удалить", f"Переместить «{name}» в удалённые?\nСессии сохранятся, проект можно восстановить."):
-            self.timer.stop(aid)
+            # Не теряем активную сессию — сохраняем её перед удалением.
+            data = self.timer.stop(aid)
+            if data:
+                try:
+                    self.db.log_session(aid, data["started_at"], data["ended_at"],
+                                        data["duration_s"], "(сохранено при удалении)")
+                except Exception as e:  # noqa: BLE001
+                    log.error("delete: log_session aid=%s: %s", aid, e)
+            self._pomos.pop(aid, None)
             self.db.delete_activity(aid)
             if self.sel_id == aid:
                 self.sel_id = None
@@ -1075,30 +1184,37 @@ class MainWindow:
         EditNoteDialog(self.root, current, on_save)
 
     def _pomo_start(self, aid, dur):
-        self._pomo_active = True
-        self._pomo_end_ts = time.time() + dur
+        self._pomos[aid] = time.time() + dur
         if not self.timer.is_active(aid):
-            self._start(aid)
+            self._start(aid)        # _start перерисует детали и покажет таймер
         else:
             self._refresh_detail(aid)
 
     def _check_pomo(self):
-        if not self._pomo_active:
-            return
-        rem = int(self._pomo_end_ts - time.time())
-        if rem <= 0:
-            self._pomo_active = False
+        now = time.time()
+        # Сработавшие помодоро (по всем проектам).
+        finished = [a for a, end in self._pomos.items() if end - now <= 0]
+        for a in finished:
+            self._pomos.pop(a, None)
+            if self._pomo_aid == a:
+                self._pomo_lbl = None
+                self._pomo_aid = None
             try:
                 self.root.bell()
             except tk.TclError:
                 pass
-            messagebox.showinfo("🍅 Pomodoro", "Время вышло!\nСделай перерыв ☕")
-            return
-        if self._pomo_lbl:
-            try:
-                self._pomo_lbl.configure(text=f"  ⏱ {fmt_hms(rem)}")
-            except tk.TclError:
-                self._pomo_lbl = None
+            act = self.db.get_activity(a)
+            nm = f"«{act['name']}» — " if act else ""
+            messagebox.showinfo("🍅 Pomodoro", f"{nm}время вышло!\nСделай перерыв ☕")
+
+        # Обновляем видимый ярлык текущего проекта.
+        if self._pomo_aid and self._pomo_lbl:
+            end = self._pomos.get(self._pomo_aid)
+            if end:
+                try:
+                    self._pomo_lbl.configure(text=f"  ⏱ {fmt_hms(max(0, int(end - now)))}")
+                except tk.TclError:
+                    self._pomo_lbl = None
 
     def _export(self):
         path = asksaveasfilename(defaultextension=".csv", filetypes=[("CSV", "*.csv")], initialfile="devtime_export.csv")

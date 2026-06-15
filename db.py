@@ -1,5 +1,5 @@
 """
-DevTime v6 — слой базы данных.
+DevTime v7 — слой базы данных.
 Весь SQL только здесь.
 """
 
@@ -38,7 +38,7 @@ class DB:
             goal_h    REAL DEFAULT 0,
             day_plan  TEXT DEFAULT '',
             status    TEXT DEFAULT 'active',
-            created   TEXT DEFAULT (date('now'))
+            created   TEXT DEFAULT (date('now', 'localtime'))
         );
         CREATE TABLE IF NOT EXISTS sessions (
             id           INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -48,6 +48,8 @@ class DB:
             duration_s   INTEGER DEFAULT 0,
             note         TEXT DEFAULT ''
         );
+        CREATE INDEX IF NOT EXISTS idx_sessions_activity ON sessions(activity_id);
+        CREATE INDEX IF NOT EXISTS idx_sessions_ended    ON sessions(ended_at);
         """)
         safe_alters = [
             "ALTER TABLE activities ADD COLUMN color TEXT DEFAULT '#4fc3f7'",
@@ -177,7 +179,7 @@ class DB:
         return self.conn.execute("""
             SELECT date(ended_at) as day, SUM(duration_s) as total
             FROM sessions
-            WHERE activity_id=? AND ended_at >= date('now', ?)
+            WHERE activity_id=? AND ended_at >= date('now', ?, 'localtime')
             GROUP BY day ORDER BY day
         """, (activity_id, f"-{days} days")).fetchall()
 
@@ -189,27 +191,32 @@ class DB:
         """, (activity_id,)).fetchall()
         if not rows:
             return 0
+        days = {row["day"] for row in rows}
+        today = date.today()
+        # Грейс: серия жива, если работал сегодня ИЛИ вчера.
+        if str(today) in days:
+            cur = today
+        elif str(today - timedelta(days=1)) in days:
+            cur = today - timedelta(days=1)
+        else:
+            return 0
         streak = 0
-        check = str(date.today())
-        for row in rows:
-            if row["day"] == check:
-                streak += 1
-                check = str(date.fromisoformat(check) - timedelta(days=1))
-            else:
-                break
+        while str(cur) in days:
+            streak += 1
+            cur -= timedelta(days=1)
         return streak
 
     def get_week_total(self, activity_id: int) -> int:
         row = self.conn.execute("""
             SELECT COALESCE(SUM(duration_s), 0) as t FROM sessions
-            WHERE activity_id=? AND ended_at >= date('now', '-7 days')
+            WHERE activity_id=? AND ended_at >= date('now', '-7 days', 'localtime')
         """, (activity_id,)).fetchone()
         return row["t"] or 0
 
     def get_today_total(self, activity_id: int) -> int:
         row = self.conn.execute("""
             SELECT COALESCE(SUM(duration_s), 0) as t FROM sessions
-            WHERE activity_id=? AND date(ended_at)=date('now')
+            WHERE activity_id=? AND date(ended_at)=date('now', 'localtime')
         """, (activity_id,)).fetchone()
         return row["t"] or 0
 
@@ -225,13 +232,13 @@ class DB:
         return self.conn.execute("""
             SELECT date(ended_at) as day, SUM(duration_s) as total
             FROM sessions
-            WHERE ended_at >= date('now', ?)
+            WHERE ended_at >= date('now', ?, 'localtime')
             GROUP BY day ORDER BY day
         """, (f"-{days} days",)).fetchall()
 
     def get_overall_stats(self) -> dict:
         total_row = self.conn.execute("""
-            SELECT COALESCE(SUM(total_s), 0) AS total_s,
+            SELECT COALESCE(SUM(CASE WHEN status!='deleted' THEN total_s ELSE 0 END), 0) AS total_s,
                    COUNT(*) AS all_projects,
                    SUM(CASE WHEN status='deleted' THEN 1 ELSE 0 END) AS deleted_projects
             FROM activities
@@ -239,12 +246,12 @@ class DB:
         today_row = self.conn.execute("""
             SELECT COALESCE(SUM(duration_s), 0) AS total
             FROM sessions
-            WHERE date(ended_at)=date('now')
+            WHERE date(ended_at)=date('now', 'localtime')
         """).fetchone()
         week_row = self.conn.execute("""
             SELECT COALESCE(SUM(duration_s), 0) AS total
             FROM sessions
-            WHERE ended_at >= date('now', '-7 days')
+            WHERE ended_at >= date('now', '-7 days', 'localtime')
         """).fetchone()
         sess_row = self.conn.execute("SELECT COUNT(*) AS total FROM sessions").fetchone()
         return {
