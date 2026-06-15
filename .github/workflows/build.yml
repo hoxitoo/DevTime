@@ -1,0 +1,98 @@
+name: Build
+
+# Собирает standalone-приложение DevTime под Linux / Windows / macOS
+# через PyInstaller. Артефакты доступны на вкладке Actions, а при пуше
+# тега вида v1.2.3 — прикрепляются к GitHub Release.
+
+on:
+  push:
+    branches: [main, "claude/**"]
+    tags: ["v*"]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # ── Быстрый гейт: синтаксис всех модулей ─────────────────────────────────
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Syntax check
+        run: |
+          python -m py_compile app.py db.py utils.py \
+            ui/__init__.py ui/dialogs.py ui/main_window.py
+
+  # ── Сборка под три ОС ────────────────────────────────────────────────────
+  build:
+    needs: check
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            name: linux
+          - os: windows-latest
+            name: windows
+          - os: macos-latest
+            name: macos
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt pyinstaller
+
+      - name: Build with PyInstaller
+        run: >
+          pyinstaller --noconfirm --clean --onefile --windowed
+          --name DevTime
+          --collect-all customtkinter
+          app.py
+
+      - name: Package (Unix)
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          cd dist
+          tar -czf "DevTime-${{ matrix.name }}.tar.gz" DevTime*
+
+      - name: Package (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          Compress-Archive -Path dist/DevTime.exe -DestinationPath dist/DevTime-windows.zip
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: DevTime-${{ matrix.name }}
+          path: |
+            dist/DevTime-${{ matrix.name }}.tar.gz
+            dist/DevTime-windows.zip
+          if-no-files-found: ignore
+
+      - name: Attach to release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/DevTime-${{ matrix.name }}.tar.gz
+            dist/DevTime-windows.zip
+          fail_on_unmatched_files: false
