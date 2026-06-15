@@ -362,7 +362,8 @@ class MainWindow:
                 # Быстрый старт прямо из карточки
                 cv.create_text(width - 13, 26, text="▶", font=(FONT_UI, 13, "bold"),
                                fill=blend("#ffffff", dark, 0.9), anchor="e", tags="qs")
-                cv.tag_bind("qs", "<Button-1>", lambda e, i=aid: self._quick_start(i))
+                # "break" — чтобы клик по ▶ не «проваливался» в открытие карточки
+                cv.tag_bind("qs", "<Button-1>", lambda e, i=aid: (self._quick_start(i), "break")[1])
 
         banner.bind("<Configure>", lambda e: _draw())
         self.root.after(30, _draw)
