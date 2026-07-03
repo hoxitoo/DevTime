@@ -35,7 +35,7 @@ export default function Sidebar({ onNewProject }) {
         <span className="text-[10px] font-bold tracking-[0.2em] text-ink-dim">БИБЛИОТЕКА</span>
         <button onClick={onNewProject}
           className="w-7 h-7 grid place-items-center rounded-lg bg-accent text-bg hover:brightness-110 transition"
-          title="Новый проект">
+          aria-label="Новый проект" title="Новый проект">
           <Plus size={16} strokeWidth={3} />
         </button>
       </div>
@@ -92,7 +92,7 @@ export default function Sidebar({ onNewProject }) {
                   <button onClick={(e) => quickStart(e, a.id)}
                     className="opacity-0 group-hover:opacity-100 transition-opacity w-7 h-7 grid place-items-center
                                rounded-md bg-black/40 text-ok hover:bg-black/60 shrink-0"
-                    title="Быстрый старт">
+                    aria-label="Быстрый старт" title="Быстрый старт">
                     <Play size={14} fill="currentColor" />
                   </button>
                 )}

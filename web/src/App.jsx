@@ -1,5 +1,5 @@
 import React, { useState } from 'react'
-import { Routes, Route, useNavigate } from 'react-router-dom'
+import { Routes, Route, useNavigate, useLocation } from 'react-router-dom'
 import { StoreProvider, useStore } from './store'
 import TopBar from './components/TopBar'
 import Sidebar from './components/Sidebar'
@@ -15,6 +15,7 @@ function Shell() {
   const [newProject, setNewProject] = useState(false)
   const { refresh } = useStore()
   const nav = useNavigate()
+  const location = useLocation()
 
   const createProject = async (body) => {
     const a = await api.create(body)
@@ -31,7 +32,7 @@ function Shell() {
           <Route path="/project/:id" element={<Sidebar onNewProject={() => setNewProject(true)} />} />
           <Route path="*" element={<Sidebar onNewProject={() => setNewProject(true)} />} />
         </Routes>
-        <main className="flex-1 overflow-y-auto">
+        <main className="flex-1 overflow-y-auto page-enter" key={location.pathname}>
           <Routes>
             <Route path="/" element={<Library onNewProject={() => setNewProject(true)} />} />
             <Route path="/project/:id" element={<Project />} />

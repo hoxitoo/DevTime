@@ -11,10 +11,10 @@ export function Modal({ title, onClose, children, width = 'max-w-md' }) {
   }, [onClose])
   return (
     <div className="fixed inset-0 z-40 grid place-items-center bg-black/60 backdrop-blur-sm" onMouseDown={onClose}>
-      <div className={`card !bg-surf w-[92vw] ${width} shadow-capsule`} onMouseDown={(e) => e.stopPropagation()}>
+      <div className={`glass rounded-xl w-[92vw] ${width} shadow-capsule page-enter`} onMouseDown={(e) => e.stopPropagation()}>
         <div className="flex items-center justify-between px-5 pt-4 pb-1">
           <h3 className="font-bold text-[15px]">{title}</h3>
-          <button onClick={onClose} className="text-ink-dim hover:text-ink transition-colors"><X size={18} /></button>
+          <button onClick={onClose} aria-label="Закрыть" className="text-ink-dim hover:text-ink transition-colors"><X size={18} /></button>
         </div>
         <div className="px-5 pb-5">{children}</div>
       </div>

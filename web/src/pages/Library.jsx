@@ -64,8 +64,9 @@ export default function Library({ onNewProject }) {
           const total = a.total_s + (t?.elapsed || 0)
           return (
             <div key={a.id} onClick={() => nav(`/project/${a.id}`)}
+              style={{ '--pc': a.color }}
               className="capsule group relative aspect-[3/4] rounded-xl overflow-hidden cursor-pointer
-                         border border-line hover:border-accent/40 hover:shadow-capsule">
+                         border border-line">
               <div className="absolute inset-0" style={{ background: capsuleGradient(a.color) }} />
               <div className="absolute inset-0 bg-gradient-to-t from-black/70 via-transparent to-black/20" />
               <span className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-[70%] text-6xl drop-shadow-lg
@@ -90,7 +91,7 @@ export default function Library({ onNewProject }) {
                 <button onClick={(e) => quickStart(e, a.id)}
                   className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity
                              w-9 h-9 grid place-items-center rounded-lg play-btn text-bg"
-                  title="Играть">
+                  aria-label="Запустить таймер" title="Играть">
                   <Play size={16} fill="currentColor" />
                 </button>
               )}

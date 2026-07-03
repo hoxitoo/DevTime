@@ -42,6 +42,37 @@ body {
   }
 }
 
+/* ── Доступность: видимые focus-кольца для клавиатуры (UX #28) ── */
+:focus-visible {
+  outline: 2px solid #4fc3f7;
+  outline-offset: 2px;
+  border-radius: 6px;
+}
+
+/* ── Стекло (glassmorphism) для модалок и тостов ── */
+.glass {
+  background: rgba(21, 26, 38, 0.82);
+  backdrop-filter: blur(18px);
+  -webkit-backdrop-filter: blur(18px);
+  border: 1px solid rgba(255, 255, 255, 0.09);
+}
+
+/* ── Появление страницы: только transform/opacity, 220ms (UX #8, #13) ── */
+@keyframes page-in {
+  from { opacity: 0; transform: translateY(8px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+.page-enter { animation: page-in .22s ease-out; }
+
+/* ── Уважение reduced-motion (UX #9) ── */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
 /* Кнопка PLAY в духе Steam: зелёный градиент + свечение */
 .play-btn {
   background: linear-gradient(90deg, #00c853 0%, #00e676 100%);
@@ -62,6 +93,13 @@ body {
 @keyframes pulse-dot { 0%,100% { opacity: 1 } 50% { opacity: .35 } }
 .dot-live { animation: pulse-dot 1.6s ease-in-out infinite; }
 
-/* Капсула проекта: подъём на hover */
-.capsule { transition: transform .16s ease, box-shadow .16s ease; }
-.capsule:hover { transform: translateY(-4px); }
+/* Капсула проекта: подъём + свечение в цвете проекта (через CSS-переменную) */
+.capsule { transition: transform .16s ease, box-shadow .16s ease; --pc: #4fc3f7; }
+.capsule:hover {
+  transform: translateY(-4px);
+  box-shadow: 0 12px 32px -8px color-mix(in srgb, var(--pc) 55%, transparent),
+              0 0 0 1px color-mix(in srgb, var(--pc) 45%, transparent);
+}
+
+/* Активное нажатие кнопок — механический отклик */
+.btn:active { transform: scale(0.97); }

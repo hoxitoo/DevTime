@@ -27,7 +27,7 @@ export function Toasts() {
     <div className="fixed bottom-5 right-5 z-50 space-y-2 w-80">
       {toasts.map((t) => (
         <div key={t.id}
-          className={`toast-enter card !bg-surf2 px-4 py-3 flex items-center gap-3 shadow-capsule ${
+          className={`toast-enter glass rounded-xl px-4 py-3 flex items-center gap-3 shadow-capsule ${
             t.glow ? '!border-accent/60 shadow-glow' : ''}`}>
           <span className="text-2xl">{t.icon}</span>
           <div className="min-w-0">

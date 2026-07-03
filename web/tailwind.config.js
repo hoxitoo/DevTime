@@ -16,7 +16,7 @@ export default {
         warn:    '#ffab40',
         ink:     '#dde3f0',
         'ink-soft': '#9aa6c3',
-        'ink-dim':  '#5d6a8a',
+        'ink-dim':  '#69779d',
       },
       fontFamily: {
         sans: ['Inter', 'Segoe UI', 'system-ui', 'sans-serif'],

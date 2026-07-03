@@ -21,6 +21,16 @@ export default function Project() {
   const [noteCtx, setNoteCtx] = useState(null) // {sid, duration, initial}
   const [plan, setPlan] = useState('')
   const [planSaved, setPlanSaved] = useState(false)
+  const [busy, setBusy] = useState(false) // защита от двойного клика (UX #32)
+
+  // Единая обёртка: блокирует повторные клики и показывает ошибки тостом (UX #33)
+  const guard = async (fn) => {
+    if (busy) return
+    setBusy(true)
+    try { await fn() }
+    catch (e) { pushToast({ icon: '⚠️', title: 'Ошибка', text: e.message }) }
+    finally { setBusy(false) }
+  }
 
   const load = useCallback(async () => {
     try {
@@ -43,16 +53,18 @@ export default function Project() {
   const pomoEnd = pomos[aid]
   const pomoLeft = pomoEnd ? Math.max(0, Math.floor((pomoEnd - Date.now()) / 1000)) : null
 
-  const doTimer = async (action) => { await api.timer(aid, action); await refresh(); await load() }
+  const doTimer = (action) => guard(async () => {
+    await api.timer(aid, action); await refresh(); await load()
+  })
 
-  const doStop = async () => {
+  const doStop = () => guard(async () => {
     const res = await api.stop(aid, '')
     await refresh(); await load()
     cancelPomo(aid)
     celebrate(res.new_achievements)
     setNoteCtx({ sid: res.session_id, duration: res.duration_s, initial: '' })
     setModal('note')
-  }
+  })
 
   const saveNote = async (note) => {
     if (note && noteCtx) await api.sessionNote(noteCtx.sid, note)
@@ -98,10 +110,10 @@ export default function Project() {
         </div>
         <div className="absolute top-4 right-5 flex gap-2">
           <button className="w-9 h-9 grid place-items-center rounded-lg bg-black/30 text-white/70 hover:text-white hover:bg-black/50 transition backdrop-blur"
-            onClick={() => setModal('edit')} title="Редактировать"><Pencil size={15} /></button>
+            onClick={() => setModal('edit')} aria-label="Редактировать" title="Редактировать"><Pencil size={15} /></button>
           {status !== 'deleted' && (
             <button className="w-9 h-9 grid place-items-center rounded-lg bg-black/30 text-white/70 hover:text-danger hover:bg-black/50 transition backdrop-blur"
-              onClick={() => setModal('confirm-delete')} title="В удалённые"><Trash2 size={15} /></button>
+              onClick={() => setModal('confirm-delete')} aria-label="Переместить в удалённые" title="В удалённые"><Trash2 size={15} /></button>
           )}
         </div>
       </div>
@@ -110,10 +122,10 @@ export default function Project() {
       <div className="bg-surf border-y border-line px-7 py-4 flex items-center gap-5 flex-wrap">
         {running && (
           <>
-            <button className="btn-ghost !w-12 !h-12 !p-0 !text-warn !border-warn/50" onClick={() => doTimer('pause')} title="Пауза">
+            <button className="btn-ghost !w-12 !h-12 !p-0 !text-warn !border-warn/50" onClick={() => doTimer('pause')} disabled={busy} aria-label="Пауза" title="Пауза">
               <Pause size={20} />
             </button>
-            <button className="btn-ghost !w-12 !h-12 !p-0 !text-danger !border-danger/50" onClick={doStop} title="Стоп">
+            <button className="btn-ghost !w-12 !h-12 !p-0 !text-danger !border-danger/50" onClick={doStop} disabled={busy} aria-label="Стоп" title="Стоп">
               <Square size={18} fill="currentColor" />
             </button>
             <span className="text-3xl font-black font-mono text-ok tabular-nums">{fmtHMS(elapsed)}</span>
@@ -121,10 +133,10 @@ export default function Project() {
         )}
         {paused && (
           <>
-            <button className="play-btn btn !w-12 !h-12 !p-0 text-bg" onClick={() => doTimer('resume')} title="Продолжить">
+            <button className="play-btn btn !w-12 !h-12 !p-0 text-bg" onClick={() => doTimer('resume')} disabled={busy} aria-label="Продолжить" title="Продолжить">
               <Play size={20} fill="currentColor" />
             </button>
-            <button className="btn-ghost !w-12 !h-12 !p-0 !text-danger !border-danger/50" onClick={doStop} title="Стоп">
+            <button className="btn-ghost !w-12 !h-12 !p-0 !text-danger !border-danger/50" onClick={doStop} disabled={busy} aria-label="Стоп" title="Стоп">
               <Square size={18} fill="currentColor" />
             </button>
             <span className="text-2xl font-black font-mono text-warn tabular-nums">⏸ {fmtHMS(elapsed)}</span>
@@ -132,7 +144,7 @@ export default function Project() {
         )}
         {!running && !paused && status === 'active' && (
           <button className="play-btn btn !px-10 !py-3.5 !text-base font-black text-bg tracking-wide"
-            onClick={() => doTimer('start')}>
+            onClick={() => doTimer('start')} disabled={busy}>
             <Play size={20} fill="currentColor" /> ИГРАТЬ
           </button>
         )}
@@ -231,7 +243,7 @@ export default function Project() {
                   </span>
                   <button className="opacity-0 group-hover:opacity-100 text-ink-dim hover:text-ink transition"
                     onClick={() => { setNoteCtx({ sid: s.id, duration: null, initial: s.note || '' }); setModal('note') }}
-                    title="Заметка">
+                    aria-label="Редактировать заметку" title="Заметка">
                     <Pencil size={13} />
                   </button>
                 </div>
