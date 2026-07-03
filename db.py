@@ -12,13 +12,15 @@ from pathlib import Path
 log = logging.getLogger(__name__)
 
 DATA_DIR = Path.home() / ".devtime"
-DATA_DIR.mkdir(exist_ok=True)
+DATA_DIR.mkdir(parents=True, exist_ok=True)
 DB_PATH  = DATA_DIR / "devtime.db"
 
 
 class DB:
-    def __init__(self, path: str = str(DB_PATH)):
-        self.conn = sqlite3.connect(path)
+    def __init__(self, path: str = str(DB_PATH), check_same_thread: bool = True):
+        # check_same_thread=False нужен API-слою (FastAPI обслуживает запросы
+        # из пула потоков); сериализацию записи обеспечивает api.server._db_lock.
+        self.conn = sqlite3.connect(path, check_same_thread=check_same_thread)
         self.conn.row_factory = sqlite3.Row
         self.conn.execute("PRAGMA foreign_keys = ON")
         self._migrate()
@@ -262,6 +264,70 @@ class DB:
             "deleted_projects": total_row["deleted_projects"] or 0,
             "sessions": sess_row["total"] or 0,
         }
+
+    # ── Факты для ачивок и профиля ───────────────────────────────────────────
+    def get_achievement_facts(self) -> dict:
+        """Агрегаты по всей БД, из которых считаются ачивки и XP."""
+        srow = self.conn.execute("""
+            SELECT COUNT(*)                                        AS sessions,
+                   COALESCE(SUM(duration_s), 0)                    AS total_s,
+                   COALESCE(MAX(duration_s), 0)                    AS longest_s,
+                   SUM(CASE WHEN TRIM(COALESCE(note,'')) != ''
+                            THEN 1 ELSE 0 END)                     AS notes,
+                   SUM(CASE WHEN CAST(strftime('%H', ended_at) AS INTEGER) < 5
+                            THEN 1 ELSE 0 END)                     AS night_sessions,
+                   SUM(CASE WHEN CAST(strftime('%H', started_at) AS INTEGER) BETWEEN 5 AND 7
+                            THEN 1 ELSE 0 END)                     AS early_sessions
+            FROM sessions
+        """).fetchone()
+        arow = self.conn.execute("""
+            SELECT COUNT(*)                                              AS projects,
+                   SUM(CASE WHEN status='completed' THEN 1 ELSE 0 END)   AS completed,
+                   SUM(CASE WHEN goal_h > 0 AND total_s >= goal_h * 3600
+                            THEN 1 ELSE 0 END)                           AS goals_reached
+            FROM activities WHERE status != 'deleted'
+        """).fetchone()
+        days_row = self.conn.execute(
+            "SELECT COUNT(DISTINCT date(ended_at)) AS d FROM sessions"
+        ).fetchone()
+        first_row = self.conn.execute(
+            "SELECT MIN(date(started_at)) AS d FROM sessions"
+        ).fetchone()
+        return {
+            "sessions":       srow["sessions"] or 0,
+            "total_s":        srow["total_s"] or 0,
+            "longest_s":      srow["longest_s"] or 0,
+            "notes":          srow["notes"] or 0,
+            "night_sessions": srow["night_sessions"] or 0,
+            "early_sessions": srow["early_sessions"] or 0,
+            "projects":       arow["projects"] or 0,
+            "completed":      arow["completed"] or 0,
+            "goals_reached":  arow["goals_reached"] or 0,
+            "active_days":    days_row["d"] or 0,
+            "first_day":      first_row["d"],
+            "overall_streak": self.get_overall_streak(),
+        }
+
+    def get_overall_streak(self) -> int:
+        """Серия дней подряд с активностью по ЛЮБОМУ проекту (грейс на сегодня)."""
+        rows = self.conn.execute(
+            "SELECT DISTINCT date(ended_at) AS day FROM sessions ORDER BY day DESC"
+        ).fetchall()
+        if not rows:
+            return 0
+        days = {row["day"] for row in rows}
+        today = date.today()
+        if str(today) in days:
+            cur = today
+        elif str(today - timedelta(days=1)) in days:
+            cur = today - timedelta(days=1)
+        else:
+            return 0
+        streak = 0
+        while str(cur) in days:
+            streak += 1
+            cur -= timedelta(days=1)
+        return streak
 
     # ── Экспорт ──────────────────────────────────────────────────────────────
     def export_csv(self, path: str) -> int:

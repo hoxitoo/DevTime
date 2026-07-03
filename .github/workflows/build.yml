@@ -1,8 +1,8 @@
 name: Build
 
-# Собирает standalone-приложение DevTime под Linux / Windows / macOS
-# через PyInstaller. Артефакты доступны на вкладке Actions, а при пуше
-# тега вида v1.2.3 — прикрепляются к GitHub Release.
+# Собирает standalone-приложение DevTime (веб-UI + FastAPI + pywebview)
+# под Linux / Windows / macOS через Vite + PyInstaller. Артефакты — на
+# вкладке Actions; при пуше тега v* — прикрепляются к GitHub Release.
 
 on:
   push:
@@ -19,7 +19,7 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  # ── Быстрый гейт: синтаксис всех модулей ─────────────────────────────────
+  # ── Быстрый гейт: синтаксис Python + сборка фронтенда ────────────────────
   check:
     runs-on: ubuntu-latest
     steps:
@@ -27,10 +27,21 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
-      - name: Syntax check
+      - name: Python syntax check
         run: |
-          python -m py_compile app.py db.py utils.py \
+          python -m py_compile app.py legacy_tk.py db.py utils.py \
+            api/__init__.py api/server.py api/achievements.py api/profile.py \
             ui/__init__.py ui/dialogs.py ui/main_window.py
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - name: Frontend build check
+        working-directory: web
+        run: |
+          npm ci
+          npm run build
 
   # ── Сборка под три ОС ────────────────────────────────────────────────────
   build:
@@ -49,6 +60,18 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: Build frontend
+        working-directory: web
+        run: |
+          npm ci
+          npm run build
+
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
@@ -60,11 +83,15 @@ jobs:
           pip install -r requirements.txt pyinstaller
 
       - name: Build with PyInstaller
-        run: >
-          pyinstaller --noconfirm --clean --onefile --windowed
-          --name DevTime
-          --collect-all customtkinter
-          app.py
+        shell: bash
+        run: |
+          SEP=":"; [ "$RUNNER_OS" = "Windows" ] && SEP=";"
+          pyinstaller --noconfirm --clean --onefile --windowed \
+            --name DevTime \
+            --add-data "web/dist${SEP}web/dist" \
+            --collect-all uvicorn \
+            --collect-all webview \
+            app.py
 
       - name: Package (Unix)
         if: runner.os != 'Windows'

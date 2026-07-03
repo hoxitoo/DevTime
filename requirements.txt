@@ -1,1 +1,9 @@
+# Ядро веб-версии
+fastapi>=0.110
+uvicorn[standard]>=0.29
+
+# Нативное окно (опционально — без него UI откроется в браузере)
+pywebview>=5.0
+
+# Классический Tkinter-интерфейс (python legacy_tk.py)
 customtkinter>=5.2.0
