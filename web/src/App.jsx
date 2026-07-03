@@ -9,6 +9,7 @@ import { ProjectModal } from './components/Modal'
 import Library from './pages/Library'
 import Project from './pages/Project'
 import Profile from './pages/Profile'
+import Week from './pages/Week'
 import Achievements from './pages/Achievements'
 import { api } from './api'
 
@@ -17,6 +18,23 @@ function Shell() {
   const { refresh } = useStore()
   const nav = useNavigate()
   const location = useLocation()
+
+  // Глобальные хоткеи: / — поиск, N — новый проект (вне полей ввода)
+  React.useEffect(() => {
+    const h = (e) => {
+      const tag = e.target.tagName
+      if (tag === 'INPUT' || tag === 'TEXTAREA' || e.target.isContentEditable) return
+      if (e.key === '/') {
+        e.preventDefault()
+        document.querySelector('input[placeholder="Поиск..."]')?.focus()
+      } else if (e.key.toLowerCase() === 'n' || e.key.toLowerCase() === 'т') {
+        e.preventDefault()
+        setNewProject(true)
+      }
+    }
+    window.addEventListener('keydown', h)
+    return () => window.removeEventListener('keydown', h)
+  }, [])
 
   const createProject = async (body) => {
     const a = await api.create(body)
@@ -37,6 +55,7 @@ function Shell() {
           <Routes>
             <Route path="/" element={<Library onNewProject={() => setNewProject(true)} />} />
             <Route path="/project/:id" element={<Project />} />
+            <Route path="/week" element={<Week />} />
             <Route path="/profile" element={<Profile />} />
             <Route path="/achievements" element={<Achievements />} />
           </Routes>

@@ -52,11 +52,20 @@ class DB:
         );
         CREATE INDEX IF NOT EXISTS idx_sessions_activity ON sessions(activity_id);
         CREATE INDEX IF NOT EXISTS idx_sessions_ended    ON sessions(ended_at);
+        CREATE TABLE IF NOT EXISTS running_state (
+            activity_id  INTEGER PRIMARY KEY,
+            started_at   TEXT,
+            elapsed_s    INTEGER DEFAULT 0,
+            paused       INTEGER DEFAULT 0,
+            updated_at   TEXT
+        );
         """)
         safe_alters = [
             "ALTER TABLE activities ADD COLUMN color TEXT DEFAULT '#4fc3f7'",
             "ALTER TABLE activities ADD COLUMN day_plan TEXT DEFAULT ''",
             "ALTER TABLE activities ADD COLUMN status TEXT DEFAULT 'active'",
+            "ALTER TABLE activities ADD COLUMN day_plan_date TEXT DEFAULT ''",
+            "ALTER TABLE activities ADD COLUMN descr TEXT DEFAULT ''",
             "ALTER TABLE sessions ADD COLUMN note TEXT DEFAULT ''",
         ]
         for stmt in safe_alters:
@@ -128,11 +137,20 @@ class DB:
     def update_day_plan(self, aid: int, text: str):
         try:
             self.conn.execute(
-                "UPDATE activities SET day_plan=? WHERE id=?", (text, aid)
+                "UPDATE activities SET day_plan=?, day_plan_date=date('now','localtime') WHERE id=?",
+                (text, aid)
             )
             self.conn.commit()
         except sqlite3.Error as e:
             log.error("update_day_plan failed: %s", e)
+            raise
+
+    def update_description(self, aid: int, text: str):
+        try:
+            self.conn.execute("UPDATE activities SET descr=? WHERE id=?", (text, aid))
+            self.conn.commit()
+        except sqlite3.Error as e:
+            log.error("update_description failed: %s", e)
             raise
 
     # ── Сессии ───────────────────────────────────────────────────────────────
@@ -175,6 +193,135 @@ class DB:
             "SELECT note FROM sessions WHERE id=?", (sid,)
         ).fetchone()
         return row["note"] if row else ""
+
+    def get_session(self, sid: int):
+        return self.conn.execute("SELECT * FROM sessions WHERE id=?", (sid,)).fetchone()
+
+    def add_manual_session(self, activity_id: int, started_at: str,
+                           duration_s: int, note: str = "") -> int:
+        """Ручное добавление забытой сессии. ended_at = started_at + duration."""
+        from datetime import datetime, timedelta
+        st = datetime.strptime(started_at, "%Y-%m-%d %H:%M:%S")
+        ended = (st + timedelta(seconds=duration_s)).strftime("%Y-%m-%d %H:%M:%S")
+        return self.log_session(activity_id, started_at, ended, duration_s, note)
+
+    def update_session(self, sid: int, started_at: str = None,
+                       duration_s: int = None, note: str = None):
+        """Правка сессии; total_s пересчитывается из фактов."""
+        from datetime import datetime, timedelta
+        row = self.get_session(sid)
+        if not row:
+            return None
+        new_start = started_at if started_at is not None else row["started_at"]
+        new_dur = duration_s if duration_s is not None else row["duration_s"]
+        new_note = note if note is not None else row["note"]
+        st = datetime.strptime(new_start, "%Y-%m-%d %H:%M:%S")
+        new_end = (st + timedelta(seconds=new_dur)).strftime("%Y-%m-%d %H:%M:%S")
+        try:
+            self.conn.execute(
+                "UPDATE sessions SET started_at=?, ended_at=?, duration_s=?, note=? WHERE id=?",
+                (new_start, new_end, new_dur, new_note, sid)
+            )
+            self.conn.commit()
+            self.recalc_total(row["activity_id"])
+            return self.get_session(sid)
+        except sqlite3.Error as e:
+            log.error("update_session failed: %s", e)
+            raise
+
+    def delete_session(self, sid: int) -> bool:
+        row = self.get_session(sid)
+        if not row:
+            return False
+        try:
+            self.conn.execute("DELETE FROM sessions WHERE id=?", (sid,))
+            self.conn.commit()
+            self.recalc_total(row["activity_id"])
+            return True
+        except sqlite3.Error as e:
+            log.error("delete_session failed: %s", e)
+            raise
+
+    def get_sessions_by_day(self, day: str) -> list:
+        """Все сессии за дату (YYYY-MM-DD) по всем проектам — для клика по heatmap."""
+        return self.conn.execute("""
+            SELECT s.*, a.name AS activity_name, a.emoji, a.color
+            FROM sessions s JOIN activities a ON a.id = s.activity_id
+            WHERE date(s.ended_at) = ?
+            ORDER BY s.started_at
+        """, (day,)).fetchall()
+
+    # ── Итоги недели ─────────────────────────────────────────────────────────
+    def get_week_insights(self) -> dict:
+        """Эта неделя (пн-вс) vs прошлая: тоталы, по дням, топ проектов."""
+        cur = self.conn.execute("""
+            SELECT COALESCE(SUM(duration_s),0) AS t FROM sessions
+            WHERE date(ended_at) >= date('now','localtime','weekday 1','-7 days')
+        """).fetchone()["t"]
+        prev = self.conn.execute("""
+            SELECT COALESCE(SUM(duration_s),0) AS t FROM sessions
+            WHERE date(ended_at) >= date('now','localtime','weekday 1','-14 days')
+              AND date(ended_at) <  date('now','localtime','weekday 1','-7 days')
+        """).fetchone()["t"]
+        days = self.conn.execute("""
+            SELECT date(ended_at) AS day, SUM(duration_s) AS total FROM sessions
+            WHERE date(ended_at) >= date('now','localtime','weekday 1','-14 days')
+            GROUP BY day ORDER BY day
+        """).fetchall()
+        top = self.conn.execute("""
+            SELECT a.id, a.name, a.emoji, a.color, SUM(s.duration_s) AS total
+            FROM sessions s JOIN activities a ON a.id = s.activity_id
+            WHERE date(s.ended_at) >= date('now','localtime','weekday 1','-7 days')
+            GROUP BY a.id ORDER BY total DESC LIMIT 5
+        """).fetchall()
+        week_start = self.conn.execute(
+            "SELECT date('now','localtime','weekday 1','-7 days') AS d").fetchone()["d"]
+        return {
+            "week_start": week_start,
+            "current_s": cur,
+            "previous_s": prev,
+            "daily": [dict(r) for r in days],
+            "top_projects": [dict(r) for r in top],
+        }
+
+    # ── Автосейв активных сессий (crash-safe) ────────────────────────────────
+    def save_running_state(self, snapshot: dict):
+        """Слепок TimerService → running_state. Вызывается раз в ~30 секунд."""
+        try:
+            self.conn.execute("DELETE FROM running_state")
+            for aid, s in snapshot.items():
+                self.conn.execute(
+                    "INSERT INTO running_state(activity_id, started_at, elapsed_s, paused, updated_at)"
+                    " VALUES(?,?,?,?,datetime('now','localtime'))",
+                    (aid, s["started_at"], s["elapsed_s"], 1 if s["paused"] else 0)
+                )
+            self.conn.commit()
+        except sqlite3.Error as e:
+            log.error("save_running_state failed: %s", e)
+
+    def clear_running_state(self):
+        try:
+            self.conn.execute("DELETE FROM running_state")
+            self.conn.commit()
+        except sqlite3.Error as e:
+            log.error("clear_running_state failed: %s", e)
+
+    def recover_running_state(self) -> int:
+        """После сбоя: незакрытые сессии из running_state → обычные сессии."""
+        rows = self.conn.execute("SELECT * FROM running_state").fetchall()
+        n = 0
+        for r in rows:
+            if r["elapsed_s"] and r["elapsed_s"] > 0:
+                self.log_session(
+                    r["activity_id"], r["started_at"],
+                    r["updated_at"] or r["started_at"],
+                    r["elapsed_s"], "(восстановлено после сбоя)"
+                )
+                n += 1
+        self.clear_running_state()
+        if n:
+            log.info("recovered %d session(s) after crash", n)
+        return n
 
     # ── Статистика по проекту ────────────────────────────────────────────────
     def get_daily_totals(self, activity_id: int, days: int = 28) -> list:

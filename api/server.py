@@ -59,7 +59,27 @@ class NoteIn(BaseModel):
     note: str = ""
 
 
-def create_app(db_path: Optional[str] = None) -> FastAPI:
+class ManualSessionIn(BaseModel):
+    started_at: str          # "YYYY-MM-DD HH:MM:SS"
+    duration_min: int        # минуты, > 0
+    note: str = ""
+
+
+class SessionPatchIn(BaseModel):
+    started_at: Optional[str] = None
+    duration_s: Optional[int] = None
+    note: Optional[str] = None
+
+
+class TextIn(BaseModel):
+    text: str = ""
+
+
+AUTOSAVE_INTERVAL_S = 30
+
+
+def create_app(db_path: Optional[str] = None,
+               autosave_interval: float = AUTOSAVE_INTERVAL_S) -> FastAPI:
     app = FastAPI(title="DevTime API", docs_url="/api/docs", openapi_url="/api/openapi.json")
     app.add_middleware(
         CORSMiddleware,
@@ -74,6 +94,27 @@ def create_app(db_path: Optional[str] = None) -> FastAPI:
     app.state.db = db
     app.state.timer = timer
     app.state.lock = lock
+
+    # Восстановление после сбоя: незакрытые сессии прошлого запуска → в журнал.
+    with lock:
+        app.state.recovered_sessions = db.recover_running_state()
+
+    # Crash-safe автосейв: слепок активных таймеров в БД раз в 30 секунд.
+    def _autosave_loop():
+        import time as _time
+        while not getattr(app.state, "_stop_autosave", False):
+            _time.sleep(autosave_interval)
+            try:
+                with lock:
+                    snap = timer.snapshot()
+                    if snap:
+                        db.save_running_state(snap)
+                    else:
+                        db.clear_running_state()
+            except Exception as e:  # noqa: BLE001
+                log.error("autosave: %s", e)
+
+    threading.Thread(target=_autosave_loop, daemon=True, name="autosave").start()
 
     # ── Вспомогательное ──────────────────────────────────────────────────────
 
@@ -96,9 +137,18 @@ def create_app(db_path: Optional[str] = None) -> FastAPI:
             raise HTTPException(404, "activity not found")
         return row
 
+    def _sync_running():
+        """Мгновенный слепок таймеров в БД (после каждого изменения состояния)."""
+        snap = timer.snapshot()
+        if snap:
+            db.save_running_state(snap)
+        else:
+            db.clear_running_state()
+
     def flush_running(note: str = "(авто-стоп)") -> int:
         """Логирует все активные сессии. Вызывается при выходе из приложения."""
         with lock:
+            app.state._stop_autosave = True
             sessions = timer.stop_all()
             for aid, data in sessions.items():
                 try:
@@ -106,6 +156,7 @@ def create_app(db_path: Optional[str] = None) -> FastAPI:
                                    data["duration_s"], note)
                 except Exception as e:  # noqa: BLE001
                     log.error("flush aid=%s: %s", aid, e)
+            db.clear_running_state()
             return len(sessions)
 
     app.state.flush_running = flush_running
@@ -164,6 +215,7 @@ def create_app(db_path: Optional[str] = None) -> FastAPI:
             if data:
                 db.log_session(aid, data["started_at"], data["ended_at"],
                                data["duration_s"], "(сохранено при смене статуса)")
+                _sync_running()
             db.set_activity_status(aid, body.status)
             return act_dict(db.get_activity(aid), with_stats=True)
 
@@ -196,6 +248,7 @@ def create_app(db_path: Optional[str] = None) -> FastAPI:
                 timer.resume(aid)
             else:
                 raise HTTPException(422, "bad action")
+            _sync_running()
             return act_dict(db.get_activity(aid))
 
     @app.post("/api/activities/{aid}/stop")
@@ -208,6 +261,7 @@ def create_app(db_path: Optional[str] = None) -> FastAPI:
             before = ach.unlocked_ids(db.get_achievement_facts())
             sid = db.log_session(aid, data["started_at"], data["ended_at"],
                                  data["duration_s"], body.note.strip())
+            _sync_running()
             after = ach.compute(db.get_achievement_facts())
             fresh = ach.unlocked_ids(db.get_achievement_facts()) - before
             return {
@@ -221,6 +275,78 @@ def create_app(db_path: Optional[str] = None) -> FastAPI:
     def session_note(sid: int, body: NoteIn):
         with lock:
             db.update_session_note(sid, body.note.strip())
+            return {"ok": True}
+
+    # ── CRUD сессий (ручные правки) ──────────────────────────────────────────
+
+    @app.post("/api/activities/{aid}/sessions", status_code=201)
+    def add_manual_session(aid: int, body: ManualSessionIn):
+        if body.duration_min <= 0 or body.duration_min > 24 * 60:
+            raise HTTPException(422, "duration must be 1..1440 minutes")
+        try:
+            from datetime import datetime
+            datetime.strptime(body.started_at, "%Y-%m-%d %H:%M:%S")
+        except ValueError:
+            raise HTTPException(422, "started_at must be 'YYYY-MM-DD HH:MM:SS'")
+        with lock:
+            get_or_404(aid)
+            before = ach.unlocked_ids(db.get_achievement_facts())
+            sid = db.add_manual_session(aid, body.started_at,
+                                        body.duration_min * 60, body.note.strip())
+            after = ach.compute(db.get_achievement_facts())
+            fresh = ach.unlocked_ids(db.get_achievement_facts()) - before
+            return {
+                "session": dict(db.get_session(sid)),
+                "new_achievements": [a for a in after if a["id"] in fresh],
+                "activity": act_dict(db.get_activity(aid), with_stats=True),
+            }
+
+    @app.put("/api/sessions/{sid}")
+    def patch_session(sid: int, body: SessionPatchIn):
+        if body.duration_s is not None and not (0 < body.duration_s <= 24 * 3600):
+            raise HTTPException(422, "duration_s must be 1..86400")
+        if body.started_at is not None:
+            try:
+                from datetime import datetime
+                datetime.strptime(body.started_at, "%Y-%m-%d %H:%M:%S")
+            except ValueError:
+                raise HTTPException(422, "started_at must be 'YYYY-MM-DD HH:MM:SS'")
+        with lock:
+            row = db.update_session(sid, body.started_at, body.duration_s,
+                                    body.note.strip() if body.note is not None else None)
+            if not row:
+                raise HTTPException(404, "session not found")
+            return dict(row)
+
+    @app.delete("/api/sessions/{sid}")
+    def remove_session(sid: int):
+        with lock:
+            if not db.delete_session(sid):
+                raise HTTPException(404, "session not found")
+            return {"ok": True}
+
+    # ── День (клик по heatmap) и итоги недели ────────────────────────────────
+
+    @app.get("/api/day/{day}")
+    def day_sessions(day: str):
+        with lock:
+            rows = db.get_sessions_by_day(day)
+            return {
+                "day": day,
+                "total_s": sum(r["duration_s"] or 0 for r in rows),
+                "sessions": [dict(r) for r in rows],
+            }
+
+    @app.get("/api/insights/week")
+    def week_insights():
+        with lock:
+            return db.get_week_insights()
+
+    @app.post("/api/activities/{aid}/description")
+    def save_description(aid: int, body: TextIn):
+        with lock:
+            get_or_404(aid)
+            db.update_description(aid, body.text.strip())
             return {"ok": True}
 
     # ── Статистика, профиль, ачивки ──────────────────────────────────────────

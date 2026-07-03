@@ -19,10 +19,23 @@ export function StoreProvider({ children }) {
 
   useEffect(() => { refresh() }, [refresh])
 
-  // Тик раз в секунду: состояние таймеров + отсчёт pomodoro
+  // Тик раз в секунду: состояние таймеров + отсчёт pomodoro + титул вкладки
   useEffect(() => {
     const t = setInterval(async () => {
-      try { setTimers(await api.timers()) } catch { /* сервер перезапускается */ }
+      try {
+        const ts = await api.timers()
+        setTimers(ts)
+        const running = Object.values(ts).filter((x) => x.running)
+        if (running.length) {
+          const el = Math.max(...running.map((x) => x.elapsed))
+          const p = (n) => String(n).padStart(2, '0')
+          document.title = `▶ ${p(Math.floor(el / 3600))}:${p(Math.floor((el % 3600) / 60))}:${p(el % 60)} · DevTime`
+        } else if (Object.keys(ts).length) {
+          document.title = '⏸ DevTime'
+        } else if (document.title !== 'DevTime') {
+          document.title = 'DevTime'
+        }
+      } catch { /* сервер перезапускается */ }
       const now = Date.now()
       const fired = Object.entries(pomosRef.current).filter(([, end]) => end <= now)
       if (fired.length) {

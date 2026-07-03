@@ -1,15 +1,21 @@
-// Профиль «игрока»: уровень, XP, звание, витрина стат, heatmap за год,
-// последние ачивки.
+// Профиль «игрока»: уровень, XP, звание, витрина стат, heatmap за год
+// (клик по дню — сессии этого дня), последние ачивки.
 import React, { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { api } from '../api'
-import { fmtHdec } from '../util'
+import { fmtHdec, fmtH, fmtHMS, fmtDate } from '../util'
 import { StatTile, ProgressBar, CountUp } from '../components/bits'
 import Heatmap from '../components/Heatmap'
+import { Modal } from '../components/Modal'
 
 export default function Profile() {
   const [p, setP] = useState(null)
+  const [day, setDay] = useState(null) // {day, total_s, sessions}
   useEffect(() => { api.profile().then(setP).catch(() => {}) }, [])
+
+  const openDay = async (iso) => {
+    try { setDay(await api.day(iso)) } catch { /* ignore */ }
+  }
 
   if (!p) return <div className="p-8 text-ink-dim text-sm">Загрузка...</div>
   const f = p.facts
@@ -62,9 +68,39 @@ export default function Profile() {
       <div className="card p-4 mt-5">
         <div className="flex items-center justify-between mb-3">
           <span className="text-[10px] font-bold tracking-[0.16em] text-ink-dim uppercase">Активность за год</span>
+          <span className="text-[10px] text-ink-dim">клик по дню — детали</span>
         </div>
-        <Heatmap daily={p.heatmap} />
+        <Heatmap daily={p.heatmap} onDayClick={openDay} />
       </div>
+
+      {/* ── Сессии выбранного дня ── */}
+      {day && (
+        <Modal title={`${fmtDate(day.day)} · ${day.total_s ? fmtH(day.total_s) : 'нет активности'}`}
+          onClose={() => setDay(null)} width="max-w-lg">
+          {day.sessions.length === 0 ? (
+            <p className="text-sm text-ink-dim">В этот день сессий не было.</p>
+          ) : (
+            <div className="divide-y divide-line/60 max-h-[50vh] overflow-y-auto">
+              {day.sessions.map((s) => (
+                <div key={s.id} className="flex items-center gap-3 py-2.5">
+                  <span className="text-lg">{s.emoji}</span>
+                  <div className="min-w-0 flex-1">
+                    <p className="text-[13px] font-semibold truncate">{s.activity_name}</p>
+                    <p className="text-[12px] text-ink-dim truncate">{s.note || '—'}</p>
+                  </div>
+                  <span className="text-[11px] font-mono text-ink-dim shrink-0">
+                    {(s.started_at || '').slice(11, 16)}
+                  </span>
+                  <span className="chip !normal-case !tracking-normal font-mono shrink-0"
+                    style={{ background: `${s.color}22`, color: s.color }}>
+                    {fmtHMS(s.duration_s)}
+                  </span>
+                </div>
+              ))}
+            </div>
+          )}
+        </Modal>
+      )}
 
       {/* ── Последние ачивки ── */}
       <div className="card p-4 mt-5">

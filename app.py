@@ -39,6 +39,35 @@ def free_port() -> int:
         return s.getsockname()[1]
 
 
+def try_start_tray(url: str, on_quit) -> bool:
+    """Иконка в системном трее (опционально: pip install pystray pillow).
+
+    Открыть / Выход. Возвращает False, если pystray недоступен.
+    """
+    try:
+        import pystray
+        from PIL import Image, ImageDraw
+    except ImportError:
+        return False
+    try:
+        img = Image.new("RGB", (64, 64), "#0b0d12")
+        d = ImageDraw.Draw(img)
+        d.ellipse([8, 8, 56, 56], outline="#4fc3f7", width=5)
+        d.line([32, 32, 32, 16], fill="#4fc3f7", width=4)   # часовая стрелка
+        d.line([32, 32, 44, 38], fill="#00e676", width=4)   # минутная
+        menu = pystray.Menu(
+            pystray.MenuItem("Открыть DevTime", lambda: webbrowser.open(url), default=True),
+            pystray.MenuItem("Выход", lambda icon: (on_quit(), icon.stop())),
+        )
+        icon = pystray.Icon("devtime", img, "DevTime", menu)
+        threading.Thread(target=icon.run, daemon=True, name="tray").start()
+        log.info("трей-иконка запущена")
+        return True
+    except Exception as e:  # noqa: BLE001 — трей не критичен
+        log.warning("трей недоступен: %s", e)
+        return False
+
+
 def main():
     ap = argparse.ArgumentParser(description="DevTime — Steam для разработчиков")
     ap.add_argument("--browser", action="store_true", help="открыть в браузере вместо нативного окна")
@@ -72,6 +101,7 @@ def main():
 
     try:
         if use_webview:
+            try_start_tray(url, shutdown)
             window = webview.create_window(
                 "DevTime", url, width=1280, height=820, min_size=(960, 640),
                 background_color="#0b0d12",
@@ -79,10 +109,12 @@ def main():
             window.events.closed += shutdown
             webview.start()
         else:
+            stop_evt = threading.Event()
+            try_start_tray(url, lambda: (shutdown(), stop_evt.set()))
             if not args.no_open:
                 webbrowser.open(url)
-            # Держим процесс, пока пользователь не остановит (Ctrl+C)
-            threading.Event().wait()
+            # Держим процесс: Ctrl+C или «Выход» в трее
+            stop_evt.wait()
     except KeyboardInterrupt:
         pass
     finally:

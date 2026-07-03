@@ -17,7 +17,7 @@ function level(total, mx) {
   return f > 0.75 ? 4 : f > 0.45 ? 3 : f > 0.2 ? 2 : 1
 }
 
-export default function Heatmap({ daily }) {
+export default function Heatmap({ daily, onDayClick }) {
   const [hover, setHover] = useState(null)
 
   const { weeks, mx, monthTicks } = useMemo(() => {
@@ -61,6 +61,8 @@ export default function Heatmap({ daily }) {
             width={CELL} height={CELL} rx="2.5"
             fill={LEVELS[level(c.total, mx)]}
             stroke={hover?.iso === c.iso ? '#4fc3f7' : 'none'} strokeWidth="1.5"
+            style={onDayClick ? { cursor: 'pointer' } : undefined}
+            onClick={() => onDayClick && onDayClick(c.iso)}
             onMouseEnter={(e) => setHover({ ...c, x: e.clientX, y: e.clientY })}
             onMouseLeave={() => setHover(null)} />
         )))}

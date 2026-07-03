@@ -86,19 +86,97 @@ export function ProjectModal({ act, onSave, onClose }) {
   )
 }
 
+const LONG_SESSION_S = 6 * 3600  // >6ч — вероятно, забытый таймер
+
 export function NoteModal({ duration, initial = '', onSave, onClose }) {
   const [note, setNote] = useState(initial)
+  const isLong = duration != null && duration > LONG_SESSION_S
+  const [hours, setHours] = useState(isLong ? (duration / 3600).toFixed(1) : null)
+
+  const save = (n) => {
+    // при длинной сессии отдаём и скорректированную длительность
+    const trimmed = isLong ? Math.round(Math.min(parseFloat(hours) || 0, duration / 3600) * 3600) : undefined
+    onSave(n, trimmed && trimmed > 0 && trimmed !== duration ? trimmed : undefined)
+  }
+
   return (
     <Modal title={duration != null ? `Сессия завершена · ${fmtHMS(duration)}` : 'Заметка к сессии'} onClose={onClose}>
+      {isLong && (
+        <div className="mb-3 rounded-lg border border-warn/50 bg-warn/10 px-3 py-2.5">
+          <p className="text-[13px] text-warn font-semibold">⚠ Сессия длиннее 6 часов — забытый таймер?</p>
+          <div className="flex items-center gap-2 mt-2">
+            <span className="text-xs text-ink-soft">Засчитать</span>
+            <input className="input !w-20 !py-1 text-center" value={hours} inputMode="decimal"
+              onChange={(e) => setHours(e.target.value)} />
+            <span className="text-xs text-ink-soft">ч из {(duration / 3600).toFixed(1)}</span>
+          </div>
+        </div>
+      )}
       <p className="text-xs text-ink-dim mb-2">Что делал? (Ctrl+Enter — сохранить)</p>
       <textarea autoFocus rows={4} className="input resize-none" value={note}
         onChange={(e) => setNote(e.target.value)}
-        onKeyDown={(e) => e.ctrlKey && e.key === 'Enter' && onSave(note.trim())} />
+        onKeyDown={(e) => e.ctrlKey && e.key === 'Enter' && save(note.trim())} />
       <div className="flex justify-end gap-2 pt-3">
-        <button className="btn-ghost" onClick={() => onSave('')}>Пропустить</button>
-        <button className="btn bg-ok text-bg font-bold hover:brightness-110" onClick={() => onSave(note.trim())}>
+        <button className="btn-ghost" onClick={() => save('')}>Пропустить</button>
+        <button className="btn bg-ok text-bg font-bold hover:brightness-110" onClick={() => save(note.trim())}>
           Сохранить
         </button>
+      </div>
+    </Modal>
+  )
+}
+
+// Ручное добавление/правка сессии («забыл нажать СТАРТ»)
+export function SessionModal({ session, onSave, onDelete, onClose }) {
+  const toLocalInput = (s) => (s || '').slice(0, 16).replace(' ', 'T')
+  const now = new Date()
+  const defStart = new Date(now.getTime() - 3600_000)
+  const pad = (n) => String(n).padStart(2, '0')
+  const defLocal = `${defStart.getFullYear()}-${pad(defStart.getMonth() + 1)}-${pad(defStart.getDate())}T${pad(defStart.getHours())}:${pad(defStart.getMinutes())}`
+
+  const [start, setStart] = useState(session ? toLocalInput(session.started_at) : defLocal)
+  const [minutes, setMinutes] = useState(session ? String(Math.round(session.duration_s / 60)) : '60')
+  const [note, setNote] = useState(session?.note || '')
+
+  const submit = () => {
+    const m = parseInt(minutes, 10)
+    if (!start || !m || m <= 0) return
+    onSave({
+      started_at: start.replace('T', ' ') + ':00',
+      duration_min: m,
+      note: note.trim(),
+    })
+  }
+
+  return (
+    <Modal title={session ? 'Редактировать сессию' : 'Добавить сессию'} onClose={onClose}>
+      <div className="space-y-3">
+        <div>
+          <label className="text-[11px] font-bold uppercase tracking-wider text-ink-dim">Начало</label>
+          <input type="datetime-local" className="input mt-1" value={start}
+            onChange={(e) => setStart(e.target.value)} />
+        </div>
+        <div>
+          <label className="text-[11px] font-bold uppercase tracking-wider text-ink-dim">Длительность, минут</label>
+          <input className="input mt-1 w-28" value={minutes} inputMode="numeric"
+            onChange={(e) => setMinutes(e.target.value)} />
+        </div>
+        <div>
+          <label className="text-[11px] font-bold uppercase tracking-wider text-ink-dim">Заметка</label>
+          <textarea rows={2} className="input mt-1 resize-none" value={note}
+            onChange={(e) => setNote(e.target.value)} placeholder="Что делал..." />
+        </div>
+        <div className="flex justify-between gap-2 pt-1">
+          {session && onDelete ? (
+            <button className="btn-danger" onClick={onDelete}>Удалить</button>
+          ) : <span />}
+          <div className="flex gap-2">
+            <button className="btn-ghost" onClick={onClose}>Отмена</button>
+            <button className="btn bg-accent text-bg font-bold hover:brightness-110" onClick={submit}>
+              Сохранить
+            </button>
+          </div>
+        </div>
       </div>
     </Modal>
   )

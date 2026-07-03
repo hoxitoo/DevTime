@@ -18,6 +18,7 @@ export default function TopBar() {
 
       <nav className="flex items-center gap-1">
         <NavLink to="/" end className={tab}>Библиотека</NavLink>
+        <NavLink to="/week" className={tab}>Неделя</NavLink>
         <NavLink to="/profile" className={tab}>Профиль</NavLink>
         <NavLink to="/achievements" className={tab}>Ачивки</NavLink>
       </nav>

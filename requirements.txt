@@ -5,5 +5,9 @@ uvicorn[standard]>=0.29
 # Нативное окно (опционально — без него UI откроется в браузере)
 pywebview>=5.0
 
+# Трей-иконка (опционально)
+pystray>=0.19
+pillow>=10.0
+
 # Классический Tkinter-интерфейс (python legacy_tk.py)
 customtkinter>=5.2.0

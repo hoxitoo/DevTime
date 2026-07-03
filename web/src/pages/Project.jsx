@@ -7,7 +7,7 @@ import { useStore } from '../store'
 import { api } from '../api'
 import { fmtH, fmtHdec, fmtHMS, fmtDate, heroGradient, STATUS_META } from '../util'
 import { StatTile, ProgressBar } from '../components/bits'
-import { ProjectModal, NoteModal, ConfirmModal } from '../components/Modal'
+import { ProjectModal, NoteModal, ConfirmModal, SessionModal } from '../components/Modal'
 import ActivityChart from '../components/ActivityChart'
 
 export default function Project() {
@@ -19,8 +19,11 @@ export default function Project() {
   const [act, setAct] = useState(null)
   const [modal, setModal] = useState(null) // 'edit' | 'note' | 'confirm-*' | {editNote}
   const [noteCtx, setNoteCtx] = useState(null) // {sid, duration, initial}
+  const [sessCtx, setSessCtx] = useState(null) // null=add | session-объект=edit
   const [plan, setPlan] = useState('')
   const [planSaved, setPlanSaved] = useState(false)
+  const [desc, setDesc] = useState('')
+  const [descEdit, setDescEdit] = useState(false)
   const [busy, setBusy] = useState(false) // защита от двойного клика (UX #32)
 
   // Единая обёртка: блокирует повторные клики и показывает ошибки тостом (UX #33)
@@ -35,11 +38,26 @@ export default function Project() {
   const load = useCallback(async () => {
     try {
       const a = await api.activity(aid)
-      setAct(a); setPlan(a.day_plan || '')
+      setAct(a); setPlan(a.day_plan || ''); setDesc(a.descr || '')
     } catch { nav('/') }
   }, [aid, nav])
 
   useEffect(() => { load() }, [load])
+
+  // Хоткей Space: старт / пауза / продолжить (вне полей ввода).
+  // Обработчик в ref, чтобы слушатель видел актуальное состояние.
+  const spaceRef = React.useRef(() => {})
+  useEffect(() => {
+    const h = (e) => {
+      if (e.code !== 'Space') return
+      const tag = e.target.tagName
+      if (tag === 'INPUT' || tag === 'TEXTAREA' || e.target.isContentEditable) return
+      e.preventDefault()
+      spaceRef.current()
+    }
+    window.addEventListener('keydown', h)
+    return () => window.removeEventListener('keydown', h)
+  }, [])
 
   if (!act) return <div className="p-8 text-ink-dim text-sm">Загрузка...</div>
 
@@ -57,6 +75,14 @@ export default function Project() {
     await api.timer(aid, action); await refresh(); await load()
   })
 
+  // Space: старт / пауза / продолжить
+  spaceRef.current = () => {
+    if (busy || modal) return
+    if (running) doTimer('pause')
+    else if (paused) doTimer('resume')
+    else if (status === 'active') doTimer('start')
+  }
+
   const doStop = () => guard(async () => {
     const res = await api.stop(aid, '')
     await refresh(); await load()
@@ -66,9 +92,45 @@ export default function Project() {
     setModal('note')
   })
 
-  const saveNote = async (note) => {
-    if (note && noteCtx) await api.sessionNote(noteCtx.sid, note)
-    setModal(null); setNoteCtx(null); await load()
+  const saveNote = async (note, trimmedS) => {
+    try {
+      if (noteCtx) {
+        if (trimmedS) {
+          // забытый таймер: обрезаем длительность вместе с заметкой
+          await api.patchSession(noteCtx.sid, { duration_s: trimmedS, note })
+          pushToast({ icon: '✂️', title: 'Сессия обрезана', text: `Засчитано ${Math.round(trimmedS / 360) / 10}ч` })
+        } else if (note) {
+          await api.sessionNote(noteCtx.sid, note)
+        }
+      }
+    } catch (e) { pushToast({ icon: '⚠️', title: 'Ошибка', text: e.message }) }
+    setModal(null); setNoteCtx(null)
+    await refresh(); await load()
+  }
+
+  // Ручные сессии: добавление / правка / удаление
+  const saveSession = async (body) => {
+    try {
+      if (sessCtx) {
+        await api.patchSession(sessCtx.id, {
+          started_at: body.started_at, duration_s: body.duration_min * 60, note: body.note,
+        })
+      } else {
+        const res = await api.addSession(aid, body)
+        celebrate(res.new_achievements)
+      }
+      setModal(null); setSessCtx(null)
+      await refresh(); await load()
+    } catch (e) { pushToast({ icon: '⚠️', title: 'Ошибка', text: e.message }) }
+  }
+
+  const deleteSession = async () => {
+    try {
+      await api.deleteSession(sessCtx.id)
+      pushToast({ icon: '🗑️', title: 'Сессия удалена', text: 'Время пересчитано' })
+      setModal(null); setSessCtx(null)
+      await refresh(); await load()
+    } catch (e) { pushToast({ icon: '⚠️', title: 'Ошибка', text: e.message }) }
   }
 
   const setStatus = async (s) => {
@@ -80,12 +142,21 @@ export default function Project() {
   const savePlan = async () => {
     await api.savePlan(aid, plan)
     setPlanSaved(true); setTimeout(() => setPlanSaved(false), 1500)
+    await load()
+  }
+
+  const saveDesc = async () => {
+    await api.saveDescription(aid, desc)
+    setDescEdit(false); await load()
   }
 
   const saveEdit = async (body) => {
     await api.update(aid, body)
     setModal(null); await refresh(); await load()
   }
+
+  const today = new Date().toISOString().slice(0, 10)
+  const planStale = act.day_plan && act.day_plan_date && act.day_plan_date < today
 
   return (
     <div>
@@ -214,9 +285,24 @@ export default function Project() {
           {/* План дня */}
           <div className="card p-4">
             <div className="flex items-center justify-between mb-2">
-              <span className="text-[10px] font-bold tracking-[0.16em] text-ink-dim uppercase">📌 План на сегодня</span>
-              <button className={`btn-ghost !py-1 !px-3 !text-xs ${planSaved ? '!text-ok !border-ok/50' : ''}`}
-                onClick={savePlan}>{planSaved ? '✓ Сохранено' : 'Сохранить'}</button>
+              <span className="text-[10px] font-bold tracking-[0.16em] text-ink-dim uppercase">
+                📌 План на сегодня
+                {planStale && (
+                  <span className="chip bg-warn/15 text-warn ml-2 !tracking-normal">
+                    от {fmtDate(act.day_plan_date)}
+                  </span>
+                )}
+              </span>
+              <div className="flex gap-1.5">
+                {planStale && (
+                  <button className="btn-ghost !py-1 !px-3 !text-xs !text-warn"
+                    onClick={() => { setPlan(''); api.savePlan(aid, '').then(load) }}>
+                    Очистить
+                  </button>
+                )}
+                <button className={`btn-ghost !py-1 !px-3 !text-xs ${planSaved ? '!text-ok !border-ok/50' : ''}`}
+                  onClick={savePlan}>{planSaved ? '✓ Сохранено' : 'Сохранить'}</button>
+              </div>
             </div>
             <textarea rows={3} className="input resize-none" value={plan}
               onChange={(e) => setPlan(e.target.value)} placeholder="Что нужно сделать сегодня..." />
@@ -224,7 +310,13 @@ export default function Project() {
 
           {/* История сессий */}
           <div className="card p-4">
-            <span className="text-[10px] font-bold tracking-[0.16em] text-ink-dim uppercase">История сессий</span>
+            <div className="flex items-center justify-between">
+              <span className="text-[10px] font-bold tracking-[0.16em] text-ink-dim uppercase">История сессий</span>
+              <button className="btn-ghost !py-1 !px-3 !text-xs"
+                onClick={() => { setSessCtx(null); setModal('session') }}>
+                ＋ Добавить забытую
+              </button>
+            </div>
             {act.sessions.length === 0 && (
               <p className="text-sm text-ink-dim mt-3">Нет сессий — жми ИГРАТЬ</p>
             )}
@@ -242,8 +334,8 @@ export default function Project() {
                     {s.note || '—'}
                   </span>
                   <button className="opacity-0 group-hover:opacity-100 text-ink-dim hover:text-ink transition"
-                    onClick={() => { setNoteCtx({ sid: s.id, duration: null, initial: s.note || '' }); setModal('note') }}
-                    aria-label="Редактировать заметку" title="Заметка">
+                    onClick={() => { setSessCtx(s); setModal('session') }}
+                    aria-label="Редактировать сессию" title="Редактировать сессию">
                     <Pencil size={13} />
                   </button>
                 </div>
@@ -277,6 +369,29 @@ export default function Project() {
               </button>
             </div>
           </div>
+
+          {/* Описание — витрина проекта */}
+          <div className="card p-4">
+            <div className="flex items-center justify-between mb-2">
+              <span className="text-[10px] font-bold tracking-[0.16em] text-ink-dim uppercase">Описание</span>
+              {descEdit ? (
+                <button className="btn-ghost !py-1 !px-3 !text-xs !text-ok" onClick={saveDesc}>Сохранить</button>
+              ) : (
+                <button className="btn-ghost !py-1 !px-3 !text-xs" onClick={() => setDescEdit(true)}>
+                  {act.descr ? 'Изменить' : 'Добавить'}
+                </button>
+              )}
+            </div>
+            {descEdit ? (
+              <textarea autoFocus rows={5} className="input resize-none text-[13px]" value={desc}
+                onChange={(e) => setDesc(e.target.value)}
+                placeholder="О чём этот проект, стек, цели..." />
+            ) : act.descr ? (
+              <p className="text-[13px] text-ink-soft leading-5 whitespace-pre-line">{act.descr}</p>
+            ) : (
+              <p className="text-[12px] text-ink-dim">Пусто — расскажи, о чём проект, как на странице игры в Steam.</p>
+            )}
+          </div>
         </div>
       </div>
 
@@ -285,6 +400,11 @@ export default function Project() {
       {modal === 'note' && noteCtx && (
         <NoteModal duration={noteCtx.duration} initial={noteCtx.initial}
           onSave={saveNote} onClose={() => { setModal(null); setNoteCtx(null) }} />
+      )}
+      {modal === 'session' && (
+        <SessionModal session={sessCtx} onSave={saveSession}
+          onDelete={sessCtx ? deleteSession : undefined}
+          onClose={() => { setModal(null); setSessCtx(null) }} />
       )}
       {modal === 'confirm-delete' && (
         <ConfirmModal title="Переместить в удалённые?" danger confirmLabel="Удалить"

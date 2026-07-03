@@ -174,3 +174,14 @@ class TimerService:
             if data:
                 result[aid] = data
         return result
+
+    def snapshot(self) -> dict[int, dict]:
+        """Слепок активных сессий для crash-safe автосейва в БД."""
+        out = {}
+        for aid, s in self._sessions.items():
+            out[aid] = {
+                "started_at": ts_from_time(s.real_started_ts),
+                "elapsed_s": s.elapsed(),
+                "paused": s.paused,
+            }
+        return out

@@ -32,6 +32,10 @@ jobs:
           python -m py_compile app.py legacy_tk.py db.py utils.py \
             api/__init__.py api/server.py api/achievements.py api/profile.py \
             ui/__init__.py ui/dialogs.py ui/main_window.py
+      - name: Tests
+        run: |
+          pip install fastapi "uvicorn[standard]" pytest httpx
+          pytest tests/ -q
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
