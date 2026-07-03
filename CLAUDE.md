@@ -74,6 +74,9 @@ DevTime/
   определяются diff'ом до/после `log_session` в эндпоинте stop.
 - **pywebview опционален**: ImportError → фолбэк на браузер. В PyInstaller-бандле
   web/dist ищется через `sys._MEIPASS` (api/server.py::static_dir).
+- **PyInstaller --windowed: sys.stdout/stderr = None** (нет консоли). app.py
+  подставляет devnull ДО настройки logging и передаёт uvicorn `log_config=None`,
+  иначе краш `'NoneType' has no attribute 'isatty'` на старте. Не убирать.
 - **Мягкое удаление**: status='deleted', сессии сохраняются.
 - **HashRouter** во фронтенде — чтобы не нужен был SPA-fallback на сервере.
 

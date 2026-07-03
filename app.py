@@ -10,11 +10,20 @@ DevTime v8 — точка входа.
 
 import argparse
 import logging
+import os
 import socket
 import sys
 import threading
 import webbrowser
 from pathlib import Path
+
+# PyInstaller --windowed (Windows/macOS): консоли нет, sys.stdout/stderr = None.
+# uvicorn при настройке логов вызывает sys.stdout.isatty() и падает
+# ('NoneType' has no attribute 'isatty'). Подставляем devnull ДО любого logging.
+if sys.stdout is None:
+    sys.stdout = open(os.devnull, "w", encoding="utf-8")
+if sys.stderr is None:
+    sys.stderr = open(os.devnull, "w", encoding="utf-8")
 
 _DATA_DIR = Path.home() / ".devtime"
 _DATA_DIR.mkdir(parents=True, exist_ok=True)
@@ -79,7 +88,10 @@ def main():
     url = f"http://127.0.0.1:{port}"
 
     app = create_app()
-    config = uvicorn.Config(app, host="127.0.0.1", port=port, log_level="warning")
+    # log_config=None — uvicorn не трогает logging.dictConfig вообще
+    # (его дефолтный конфиг небезопасен в --windowed сборках без консоли).
+    config = uvicorn.Config(app, host="127.0.0.1", port=port,
+                            log_level="warning", log_config=None)
     server = uvicorn.Server(config)
     threading.Thread(target=server.run, daemon=True, name="uvicorn").start()
 
