@@ -1,6 +1,7 @@
 // Библиотека: сетка «капсул» проектов как в Steam + сводные плитки.
 import React, { useEffect, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
+import { motion } from 'motion/react'
 import { Play, Plus } from 'lucide-react'
 import { useStore } from '../store'
 import { api } from '../api'
@@ -59,11 +60,15 @@ export default function Library({ onNewProject }) {
       )}
 
       <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-4">
-        {visible.map((a) => {
+        {visible.map((a, i) => {
           const t = timers[a.id]
           const total = a.total_s + (t?.elapsed || 0)
           return (
-            <div key={a.id} onClick={() => nav(`/project/${a.id}`)}
+            <motion.div key={a.id} onClick={() => nav(`/project/${a.id}`)}
+              layout
+              initial={{ opacity: 0, y: 18, scale: 0.96 }}
+              animate={{ opacity: 1, y: 0, scale: 1 }}
+              transition={{ type: 'spring', stiffness: 320, damping: 26, delay: Math.min(i * 0.045, 0.5) }}
               style={{ '--pc': a.color }}
               className="capsule group relative aspect-[3/4] rounded-xl overflow-hidden cursor-pointer
                          border border-line">
@@ -95,7 +100,7 @@ export default function Library({ onNewProject }) {
                   <Play size={16} fill="currentColor" />
                 </button>
               )}
-            </div>
+            </motion.div>
           )
         })}
       </div>

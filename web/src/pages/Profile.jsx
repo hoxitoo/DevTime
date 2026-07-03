@@ -4,7 +4,7 @@ import React, { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { api } from '../api'
 import { fmtHdec } from '../util'
-import { StatTile, ProgressBar } from '../components/bits'
+import { StatTile, ProgressBar, CountUp } from '../components/bits'
 import Heatmap from '../components/Heatmap'
 
 export default function Profile() {
@@ -40,7 +40,7 @@ export default function Profile() {
               <div className="flex-1 max-w-sm">
                 <ProgressBar pct={p.level_pct} h={8} />
                 <p className="text-[11px] text-ink-dim mt-1 font-mono">
-                  {p.xp.toLocaleString('ru')} XP · до уровня {p.level + 1} ещё {p.xp_to_next.toLocaleString('ru')} XP
+                  <CountUp value={p.xp} /> XP · до уровня {p.level + 1} ещё {p.xp_to_next.toLocaleString('ru')} XP
                 </p>
               </div>
             </div>

@@ -1,5 +1,6 @@
 import React, { useState } from 'react'
 import { Routes, Route, useNavigate, useLocation } from 'react-router-dom'
+import { MotionConfig } from 'motion/react'
 import { StoreProvider, useStore } from './store'
 import TopBar from './components/TopBar'
 import Sidebar from './components/Sidebar'
@@ -49,8 +50,11 @@ function Shell() {
 
 export default function App() {
   return (
-    <StoreProvider>
-      <Shell />
-    </StoreProvider>
+    // reducedMotion="user" — Motion сам отключит анимации при prefers-reduced-motion
+    <MotionConfig reducedMotion="user">
+      <StoreProvider>
+        <Shell />
+      </StoreProvider>
+    </MotionConfig>
   )
 }

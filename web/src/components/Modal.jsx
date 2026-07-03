@@ -1,5 +1,6 @@
 // Модалки: базовая, проект (создание/редактирование), заметка, подтверждение.
 import React, { useEffect, useState } from 'react'
+import { motion } from 'motion/react'
 import { X } from 'lucide-react'
 import { EMOJIS, PROJECT_COLORS, fmtHMS } from '../util'
 
@@ -10,15 +11,21 @@ export function Modal({ title, onClose, children, width = 'max-w-md' }) {
     return () => window.removeEventListener('keydown', h)
   }, [onClose])
   return (
-    <div className="fixed inset-0 z-40 grid place-items-center bg-black/60 backdrop-blur-sm" onMouseDown={onClose}>
-      <div className={`glass rounded-xl w-[92vw] ${width} shadow-capsule page-enter`} onMouseDown={(e) => e.stopPropagation()}>
+    <motion.div className="fixed inset-0 z-40 grid place-items-center bg-black/60 backdrop-blur-sm"
+      initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ duration: 0.15 }}
+      onMouseDown={onClose}>
+      <motion.div className={`glass rounded-xl w-[92vw] ${width} shadow-capsule`}
+        initial={{ opacity: 0, scale: 0.94, y: 14 }}
+        animate={{ opacity: 1, scale: 1, y: 0 }}
+        transition={{ type: 'spring', stiffness: 420, damping: 30 }}
+        onMouseDown={(e) => e.stopPropagation()}>
         <div className="flex items-center justify-between px-5 pt-4 pb-1">
           <h3 className="font-bold text-[15px]">{title}</h3>
           <button onClick={onClose} aria-label="Закрыть" className="text-ink-dim hover:text-ink transition-colors"><X size={18} /></button>
         </div>
         <div className="px-5 pb-5">{children}</div>
-      </div>
-    </div>
+      </motion.div>
+    </motion.div>
   )
 }
 
